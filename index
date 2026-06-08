@@ -1,0 +1,202 @@
+<script>
+
+const API_URL = "https://script.google.com/macros/s/AKfycbzZiCFzCup1PU1yPjhpWhc4VS3DD98QJD9a32hf0CfCbc1AWw2LONJUe6ytorxqRemUvQ/exec";
+
+const area = document.getElementById("area");
+const claw = document.getElementById("claw");
+const result = document.getElementById("result");
+const btn = document.getElementById("btn");
+
+/* =========================
+   USER ID (анти-чит базовый)
+========================= */
+function getUserId(){
+  return btoa(
+    navigator.userAgent +
+    screen.width +
+    screen.height +
+    Intl.DateTimeFormat().resolvedOptions().timeZone
+  );
+}
+
+/* =========================
+   SPAWN ITEMS
+========================= */
+function spawn(){
+  for(let i=0;i<16;i++){
+    const el=document.createElement("div");
+    el.className="item "+
+      (i%9===0?"gold":i%3===0?"toy":"bottle");
+
+    el.style.left=Math.random()*80+"%";
+    el.style.top=(20+Math.random()*60)+"%";
+
+    area.appendChild(el);
+  }
+}
+spawn();
+
+function pick(){
+  const items=document.querySelectorAll(".item");
+  return items[Math.floor(Math.random()*items.length)];
+}
+
+/* =========================
+   ARCADE SOUND ENGINE
+========================= */
+let audioCtx;
+function sound(type){
+
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+
+  o.connect(g);
+  g.connect(audioCtx.destination);
+
+  if(type==="motor") o.frequency.value=220;
+  if(type==="grab") o.frequency.value=520;
+  if(type==="win") o.frequency.value=1040;
+  if(type==="drop") o.frequency.value=120;
+
+  g.gain.value = 0.05;
+
+  o.start();
+  setTimeout(()=>o.stop(),180);
+}
+
+/* =========================
+   PHYSICS SYSTEM (CORE)
+========================= */
+function physics(item, win){
+
+  if(win){
+    /* стабильный захват */
+    item.style.transition = "0.25s cubic-bezier(.2,.9,.2,1)";
+    item.style.transform = "scale(0.32)";
+    item.style.opacity = "0.6";
+  } else {
+
+    /* 🔥 ARCADE FAIL: “ПОЧТИ УДЕРЖАЛ, НО СОРВАЛОСЬ” */
+    const x = (Math.random()*50-25);
+    const y = (20 + Math.random()*60);
+
+    item.style.transition = "0.35s cubic-bezier(.2,.8,.2,1)";
+    item.style.transform = `translate(${x}px, ${y}px)`;
+    item.style.opacity = "0.9";
+  }
+}
+
+/* =========================
+   MAIN GAME LOOP
+========================= */
+btn.onclick = async () => {
+
+btn.disabled = true;
+result.innerText = "";
+
+const item = pick();
+const r = item.getBoundingClientRect();
+const a = area.getBoundingClientRect();
+
+const x = r.left - a.left;
+const y = r.top - a.top;
+
+/* 1. НАВЕДЕНИЕ (инерция) */
+claw.style.transition = "1.2s cubic-bezier(.2,.9,.2,1)";
+claw.style.left = x + "px";
+sound("motor");
+
+await wait(950);
+
+/* 2. ОПУСКАНИЕ (медленнее = напряжение) */
+claw.style.transition = "1s cubic-bezier(.2,.7,.2,1)";
+claw.style.top = y + "px";
+
+await wait(1000);
+
+/* 3. “ЗАЖИМ” (момент аркады) */
+claw.style.transition = "0.08s";
+claw.style.transform = "translateX(-50%) scale(1.08)";
+sound("grab");
+
+await wait(220);
+
+claw.style.transform = "translateX(-50%) scale(1)";
+
+/* =========================
+   SERVER CHECK (GOOGLE SHEETS)
+========================= */
+let data;
+
+try{
+  const res = await fetch(API_URL,{
+    method:"POST",
+    body: JSON.stringify({
+      userId: getUserId()
+    })
+  });
+
+  data = await res.json();
+
+}catch(e){
+  result.innerText="Ошибка соединения с сервером";
+  return;
+}
+
+/* =========================
+   RESULT LOGIC
+========================= */
+const win = data.win;
+
+/* physics reaction */
+physics(item, win);
+
+/* sound reaction */
+sound(win ? "win" : "drop");
+
+await wait(700);
+
+/* =========================
+   RETURN CLAW
+========================= */
+claw.style.transition = "1.3s cubic-bezier(.2,.9,.2,1)";
+claw.style.top = "0px";
+claw.style.left = "50%";
+claw.style.transform = "translateX(-50%)";
+
+/* =========================
+   UI OUTPUT
+========================= */
+if(win){
+
+  document.querySelectorAll(".item").forEach(i=>{
+    i.style.opacity="0.25";
+  });
+
+  result.innerHTML = `
+    🎉 <b>ПОБЕДА!</b><br><br>
+    <b>ПРОМОКОД:</b><br>
+    ${data.code}
+  `;
+
+}else{
+
+  result.innerText =
+    "Почти получилось... ещё один шанс мог бы всё изменить.";
+}
+
+};
+
+/* =========================
+   UTILS
+========================= */
+function wait(ms){
+  return new Promise(r=>setTimeout(r,ms));
+}
+
+</script>
+
