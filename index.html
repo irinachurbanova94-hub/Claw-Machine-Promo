@@ -1,202 +1,238 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claw Arcade PRO</title>
+
+<script src="https://pixijs.download/release/pixi.min.js"></script>
+
+<style>
+body {
+margin:0;
+background:#050b18;
+overflow:hidden;
+font-family:Arial;
+}
+
+#ui {
+position:absolute;
+bottom:0;
+width:100%;
+height:120px;
+display:flex;
+justify-content:center;
+align-items:center;
+background:linear-gradient(to top,#061425,transparent);
+z-index:10;
+}
+
+button {
+padding:14px 40px;
+font-size:18px;
+border:none;
+border-radius:12px;
+background:linear-gradient(145deg,#1f6dff,#003fa3);
+color:white;
+cursor:pointer;
+}
+
+#result {
+position:absolute;
+top:20px;
+width:100%;
+text-align:center;
+color:white;
+font-size:18px;
+z-index:10;
+}
+</style>
+</head>
+
+<body>
+
+<div id="result"></div>
+<div id="ui">
+<button id="btn">СТАРТ</button>
+</div>
+
 <script>
 
+// -------------------------
+// CONFIG
+// -------------------------
 const API_URL = "https://script.google.com/macros/s/AKfycbzZiCFzCup1PU1yPjhpWhc4VS3DD98QJD9a32hf0CfCbc1AWw2LONJUe6ytorxqRemUvQ/exec";
 
-const area = document.getElementById("area");
-const claw = document.getElementById("claw");
-const result = document.getElementById("result");
-const btn = document.getElementById("btn");
+// -------------------------
+// PIXI APP
+// -------------------------
+const app = new PIXI.Application({
+  width: window.innerWidth,
+  height: window.innerHeight,
+  backgroundColor: 0x050b18
+});
 
-/* =========================
-   USER ID (анти-чит базовый)
-========================= */
+document.body.appendChild(app.view);
+
+// -------------------------
+// LAYERS (глубина)
+// -------------------------
+const background = new PIXI.Container();
+const gameLayer = new PIXI.Container();
+const clawLayer = new PIXI.Container();
+
+app.stage.addChild(background);
+app.stage.addChild(gameLayer);
+app.stage.addChild(clawLayer);
+
+// -------------------------
+// LIGHT OVERLAY (эффект стекла)
+// -------------------------
+const overlay = new PIXI.Graphics();
+overlay.beginFill(0x000000, 0.25);
+overlay.drawRect(0,0,app.screen.width,app.screen.height);
+overlay.endFill();
+app.stage.addChild(overlay);
+
+// -------------------------
+// ASSETS HELPERS
+// -------------------------
+function sprite(url, size=60){
+  const s = PIXI.Sprite.from(url);
+  s.width = size;
+  s.height = size;
+  return s;
+}
+
+// -------------------------
+// ITEMS
+// -------------------------
+const items = [];
+
+function spawnItems(){
+  for(let i=0;i<18;i++){
+
+    let type = "bottle.png";
+    if(i%7===0) type = "gold.png";
+    else if(i%3===0) type = "toy.png";
+
+    const item = sprite(`assets/${type}`, 60);
+
+    item.x = 100 + Math.random()*(app.screen.width-200);
+    item.y = 150 + Math.random()*(app.screen.height-350);
+
+    item.interactive = true;
+
+    gameLayer.addChild(item);
+    items.push(item);
+  }
+}
+
+spawnItems();
+
+// -------------------------
+// CLAW
+// -------------------------
+const claw = new PIXI.Graphics();
+claw.beginFill(0xaaaaaa);
+claw.drawRect(-10,0,20,40);
+claw.endFill();
+
+claw.x = app.screen.width/2;
+claw.y = 50;
+
+clawLayer.addChild(claw);
+
+// -------------------------
+// GAME STATE
+// -------------------------
+let busy = false;
+
 function getUserId(){
-  return btoa(
-    navigator.userAgent +
-    screen.width +
-    screen.height +
-    Intl.DateTimeFormat().resolvedOptions().timeZone
-  );
+  return btoa(navigator.userAgent + screen.width + screen.height);
 }
 
-/* =========================
-   SPAWN ITEMS
-========================= */
-function spawn(){
-  for(let i=0;i<16;i++){
-    const el=document.createElement("div");
-    el.className="item "+
-      (i%9===0?"gold":i%3===0?"toy":"bottle");
-
-    el.style.left=Math.random()*80+"%";
-    el.style.top=(20+Math.random()*60)+"%";
-
-    area.appendChild(el);
-  }
-}
-spawn();
-
-function pick(){
-  const items=document.querySelectorAll(".item");
-  return items[Math.floor(Math.random()*items.length)];
-}
-
-/* =========================
-   ARCADE SOUND ENGINE
-========================= */
-let audioCtx;
-function sound(type){
-
-  if(!audioCtx){
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-
-  const o = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-
-  o.connect(g);
-  g.connect(audioCtx.destination);
-
-  if(type==="motor") o.frequency.value=220;
-  if(type==="grab") o.frequency.value=520;
-  if(type==="win") o.frequency.value=1040;
-  if(type==="drop") o.frequency.value=120;
-
-  g.gain.value = 0.05;
-
-  o.start();
-  setTimeout(()=>o.stop(),180);
-}
-
-/* =========================
-   PHYSICS SYSTEM (CORE)
-========================= */
-function physics(item, win){
-
-  if(win){
-    /* стабильный захват */
-    item.style.transition = "0.25s cubic-bezier(.2,.9,.2,1)";
-    item.style.transform = "scale(0.32)";
-    item.style.opacity = "0.6";
-  } else {
-
-    /* 🔥 ARCADE FAIL: “ПОЧТИ УДЕРЖАЛ, НО СОРВАЛОСЬ” */
-    const x = (Math.random()*50-25);
-    const y = (20 + Math.random()*60);
-
-    item.style.transition = "0.35s cubic-bezier(.2,.8,.2,1)";
-    item.style.transform = `translate(${x}px, ${y}px)`;
-    item.style.opacity = "0.9";
-  }
-}
-
-/* =========================
-   MAIN GAME LOOP
-========================= */
-btn.onclick = async () => {
-
-btn.disabled = true;
-result.innerText = "";
-
-const item = pick();
-const r = item.getBoundingClientRect();
-const a = area.getBoundingClientRect();
-
-const x = r.left - a.left;
-const y = r.top - a.top;
-
-/* 1. НАВЕДЕНИЕ (инерция) */
-claw.style.transition = "1.2s cubic-bezier(.2,.9,.2,1)";
-claw.style.left = x + "px";
-sound("motor");
-
-await wait(950);
-
-/* 2. ОПУСКАНИЕ (медленнее = напряжение) */
-claw.style.transition = "1s cubic-bezier(.2,.7,.2,1)";
-claw.style.top = y + "px";
-
-await wait(1000);
-
-/* 3. “ЗАЖИМ” (момент аркады) */
-claw.style.transition = "0.08s";
-claw.style.transform = "translateX(-50%) scale(1.08)";
-sound("grab");
-
-await wait(220);
-
-claw.style.transform = "translateX(-50%) scale(1)";
-
-/* =========================
-   SERVER CHECK (GOOGLE SHEETS)
-========================= */
-let data;
-
-try{
+// -------------------------
+// SERVER CALL
+// -------------------------
+async function checkWin(){
   const res = await fetch(API_URL,{
     method:"POST",
-    body: JSON.stringify({
-      userId: getUserId()
-    })
+    body:JSON.stringify({ userId:getUserId() })
   });
 
-  data = await res.json();
-
-}catch(e){
-  result.innerText="Ошибка соединения с сервером";
-  return;
+  return await res.json();
 }
 
-/* =========================
-   RESULT LOGIC
-========================= */
+// -------------------------
+// ANIMATION
+// -------------------------
+function moveTo(targetX, targetY, time=1000){
+
+  return new Promise(resolve => {
+
+    const startX = claw.x;
+    const startY = claw.y;
+
+    const dx = targetX - startX;
+    const dy = targetY - startY;
+
+    let t = 0;
+
+    const tick = (delta)=>{
+
+      t += delta * 16;
+      const p = Math.min(t/time,1);
+
+      claw.x = startX + dx*p;
+      claw.y = startY + dy*p;
+
+      if(p>=1){
+        app.ticker.remove(tick);
+        resolve();
+      }
+    };
+
+    app.ticker.add(tick);
+  });
+}
+
+// -------------------------
+// GAME LOOP
+// -------------------------
+document.getElementById("btn").onclick = async () => {
+
+if(busy) return;
+busy = true;
+
+const item = items[Math.floor(Math.random()*items.length)];
+
+await moveTo(item.x, item.y, 1200);
+
+// "захват"
+item.scale.set(0.8);
+
+const data = await checkWin();
+
 const win = data.win;
 
-/* physics reaction */
-physics(item, win);
-
-/* sound reaction */
-sound(win ? "win" : "drop");
-
-await wait(700);
-
-/* =========================
-   RETURN CLAW
-========================= */
-claw.style.transition = "1.3s cubic-bezier(.2,.9,.2,1)";
-claw.style.top = "0px";
-claw.style.left = "50%";
-claw.style.transform = "translateX(-50%)";
-
-/* =========================
-   UI OUTPUT
-========================= */
 if(win){
-
-  document.querySelectorAll(".item").forEach(i=>{
-    i.style.opacity="0.25";
-  });
-
-  result.innerHTML = `
-    🎉 <b>ПОБЕДА!</b><br><br>
-    <b>ПРОМОКОД:</b><br>
-    ${data.code}
-  `;
-
+  item.texture = PIXI.Texture.from("assets/gold.png");
+  document.getElementById("result").innerHTML =
+    "🎉 ВЫ ВЫИГРАЛИ! " + data.code;
 }else{
-
-  result.innerText =
-    "Почти получилось... ещё один шанс мог бы всё изменить.";
+  item.scale.set(1);
+  document.getElementById("result").innerHTML =
+    "Почти получилось…";
 }
 
+// возврат
+await moveTo(app.screen.width/2, 50, 900);
+
+busy = false;
 };
-
-/* =========================
-   UTILS
-========================= */
-function wait(ms){
-  return new Promise(r=>setTimeout(r,ms));
-}
 
 </script>
 
+</body>
+</html>
